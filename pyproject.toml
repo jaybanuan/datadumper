@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "datadumper"
+version = "0.1.0"
+description = ""
+authors = ["Jaybanuan"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pandas = {version = "^2.1.4", optional = true}
+
+[tool.poetry.extras]
+pandas = ["pandas"]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
