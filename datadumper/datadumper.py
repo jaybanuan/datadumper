@@ -10,12 +10,29 @@ class DumpFunc(Protocol):
 
 
 class DataDumper:
+    @classmethod
+    def __get_caller_stack_frame(cls) -> inspect.FrameInfo:
+        result = None
+
+        stack_frames = inspect.stack()
+
+        top = stack_frames[0]
+        for stack_frame in stack_frames[1:]:
+            if stack_frame.frame.f_code.co_filename != top.frame.f_code.co_filename:
+                result = stack_frame
+                break
+        
+        return result
+
+
     def __init__(self, output_dir: str | os.PathLike[str], dump_func: DumpFunc, append_source: bool = True) -> None:
         self.__counter = 0
 
         dirs = [output_dir]
         if append_source:
-            dirs.append(pathlib.Path(inspect.stack()[1].frame.f_code.co_filename).stem)
+            stack_frame = DataDumper.__get_caller_stack_frame()
+            if stack_frame:
+                dirs.append(pathlib.Path(stack_frame.frame.f_code.co_filename).stem)
 
         self.__output_dir = pathlib.Path(*dirs)
 
@@ -27,8 +44,11 @@ class DataDumper:
             self.__output_dir.mkdir(parents=True, exist_ok=True)
 
             if file_name_hint is None:
-                caller_name = inspect.stack()[1].function
-                file_name_hint = caller_name if caller_name != '<module>' else ''
+                stack_frame = DataDumper.__get_caller_stack_frame()
+                if stack_frame and stack_frame.function != '<module>':
+                    file_name_hint = stack_frame.function
+                else:
+                    file_name_hint = ''
 
             file_name_stem = f'{self.__counter:02}{"_" if file_name_hint else ""}{file_name_hint}'
                 
