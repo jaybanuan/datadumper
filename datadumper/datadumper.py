@@ -1,8 +1,9 @@
 import inspect
 import os
 import pathlib
+import functools
 
-from typing import *
+from typing import Callable, TypeVar, ParamSpec, Protocol, Any
 
 
 class DumpFunc(Protocol):
@@ -11,7 +12,7 @@ class DumpFunc(Protocol):
 
 class DataDumper:
     @classmethod
-    def __get_caller_stack_frame(cls) -> inspect.FrameInfo:
+    def __get_caller_stack_frame(cls) -> inspect.FrameInfo | None:
         result = None
 
         stack_frames = inspect.stack()
@@ -25,26 +26,27 @@ class DataDumper:
         return result
 
 
-    def __init__(self, output_dir: str | os.PathLike[str], dump_func: DumpFunc, append_source: bool = True) -> None:
+    def __init__(self, output_dir: str | os.PathLike[str], dump_func: DumpFunc, by_module: bool = True) -> None:
+        self.__output_dir = pathlib.Path(output_dir)
+        self.__dump_func = dump_func
+        self.__by_module = by_module
         self.__counter = 0
 
-        dirs = [output_dir]
-        if append_source:
-            stack_frame = DataDumper.__get_caller_stack_frame()
-            if stack_frame:
-                dirs.append(pathlib.Path(stack_frame.frame.f_code.co_filename).stem)
 
-        self.__output_dir = pathlib.Path(*dirs)
-
-        self.__dump_func = dump_func
-
-
-    def dump(self, data: Any, file_name_hint: str = None) -> None:
+    def dump(self, data: Any, file_name_hint: str | None = None) -> None:
         try:
-            self.__output_dir.mkdir(parents=True, exist_ok=True)
+            stack_frame = DataDumper.__get_caller_stack_frame()
+
+            output_dir = self.__output_dir
+            if self.__by_module and stack_frame:
+                output_dir = pathlib.Path(
+                    output_dir,
+                    pathlib.Path(stack_frame.frame.f_code.co_filename).stem     # module name
+                )
+
+            output_dir.mkdir(parents=True, exist_ok=True)
 
             if file_name_hint is None:
-                stack_frame = DataDumper.__get_caller_stack_frame()
                 if stack_frame and stack_frame.function != '<module>':
                     file_name_hint = stack_frame.function
                 else:
@@ -52,13 +54,13 @@ class DataDumper:
 
             file_name_stem = f'{self.__counter:02}{"_" if file_name_hint else ""}{file_name_hint}'
                 
-            self.__dump_func(output_dir=self.__output_dir, file_name_stem=file_name_stem, data=data)
+            self.__dump_func(output_dir=output_dir, file_name_stem=file_name_stem, data=data)
         finally:
             self.__counter += 1
 
 
 class JsonDumper(DataDumper):
-    def __init__(self, output_dir: str | os.PathLike[str], append_source: bool = True) -> None:
+    def __init__(self, output_dir: str | os.PathLike[str], by_module: bool = True) -> None:
         import json
 
         def __dump_func(output_dir: str | os.PathLike[str] , file_name_stem: str, data: list | dict) -> None:
@@ -68,12 +70,12 @@ class JsonDumper(DataDumper):
         super().__init__(
             output_dir=output_dir,
             dump_func=__dump_func,
-            append_source=append_source
+            by_module=by_module
         )
 
 
 class DataFrameDumper(DataDumper):
-    def __init__(self, output_dir: str | os.PathLike[str], append_source: bool = True) -> None:
+    def __init__(self, output_dir: str | os.PathLike[str], by_module: bool = True) -> None:
         import pandas as pd
 
         def __dump_func(output_dir: str | os.PathLike[str] , file_name_stem: str, data: pd.DataFrame) -> None:
@@ -85,5 +87,24 @@ class DataFrameDumper(DataDumper):
         super().__init__(
             output_dir=output_dir,
             dump_func=__dump_func,
-            append_source=append_source
+            by_module=by_module
         )
+
+
+R = TypeVar('R')
+P = ParamSpec('P')
+
+
+# デコレータ
+def datadump(dumper: DataDumper) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    def datadump_wrapper(f: Callable[P, R]) -> Callable[P, R]:
+        @functools.wraps(f)
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            data = f(*args, **kwargs)
+            dumper.dump(data, f.__name__)
+        
+            return data
+
+        return wrapper
+    
+    return datadump_wrapper
