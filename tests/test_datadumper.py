@@ -21,3 +21,14 @@ def test_json():
 
     data_dumper.dump(data)
     data_dumper.dump(data)
+
+
+
+def test_decorator_class():
+    dd.datadump.set_dumper(dict, dd.JsonDumper(output_dir='tmp/json'))
+
+    @dd.datadump
+    def func(message: str) -> dict:
+        return {'message': message}
+
+    func('hello')

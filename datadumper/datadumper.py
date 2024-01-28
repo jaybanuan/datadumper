@@ -1,7 +1,8 @@
+import functools
 import inspect
 import os
 import pathlib
-import functools
+import threading
 
 from typing import Callable, TypeVar, ParamSpec, Protocol, Any
 
@@ -27,34 +28,29 @@ class DataDumper:
 
 
     def __init__(self, output_dir: str | os.PathLike[str], dump_func: DumpFunc, by_module: bool = True) -> None:
-        self.__output_dir = pathlib.Path(output_dir)
+        path_elements = [output_dir]
+        if by_module and (stack_frame := DataDumper.__get_caller_stack_frame()):
+            # append module name
+            path_elements.append(pathlib.Path(stack_frame.frame.f_code.co_filename).stem)
+        
+        self.__output_dir = pathlib.Path(*path_elements)
         self.__dump_func = dump_func
-        self.__by_module = by_module
         self.__counter = 0
 
 
     def dump(self, data: Any, file_name_hint: str | None = None) -> None:
         try:
-            stack_frame = DataDumper.__get_caller_stack_frame()
-
-            output_dir = self.__output_dir
-            if self.__by_module and stack_frame:
-                output_dir = pathlib.Path(
-                    output_dir,
-                    pathlib.Path(stack_frame.frame.f_code.co_filename).stem     # module name
-                )
-
-            output_dir.mkdir(parents=True, exist_ok=True)
+            self.__output_dir.mkdir(parents=True, exist_ok=True)
 
             if file_name_hint is None:
-                if stack_frame and stack_frame.function != '<module>':
+                if (stack_frame := DataDumper.__get_caller_stack_frame()) and stack_frame.function != '<module>':
                     file_name_hint = stack_frame.function
                 else:
                     file_name_hint = ''
 
             file_name_stem = f'{self.__counter:02}{"_" if file_name_hint else ""}{file_name_hint}'
                 
-            self.__dump_func(output_dir=output_dir, file_name_stem=file_name_stem, data=data)
+            self.__dump_func(output_dir=self.__output_dir, file_name_stem=file_name_stem, data=data)
         finally:
             self.__counter += 1
 
@@ -75,13 +71,13 @@ class JsonDumper(DataDumper):
 
 
 class DataFrameDumper(DataDumper):
-    def __init__(self, output_dir: str | os.PathLike[str], by_module: bool = True) -> None:
+    def __init__(self, output_dir: str | os.PathLike[str], by_module: bool = True, encoding: str = 'utf-8_sig') -> None:
         import pandas as pd
 
         def __dump_func(output_dir: str | os.PathLike[str] , file_name_stem: str, data: pd.DataFrame) -> None:
             data.to_csv(
                 pathlib.Path(output_dir, f'{file_name_stem}.csv'),
-                encoding='cp932'
+                encoding=encoding
             )
 
         super().__init__(
@@ -95,16 +91,44 @@ R = TypeVar('R')
 P = ParamSpec('P')
 
 
-# デコレータ
-def datadump(dumper: DataDumper) -> Callable[[Callable[P, R]], Callable[P, R]]:
-    def datadump_wrapper(f: Callable[P, R]) -> Callable[P, R]:
+# decorator class
+class DataDump:
+    def __init__(self) -> None:
+        self.__thread_local = threading.local()
+        self.__thread_local.dumpers = dict()
+
+    
+    def get_dumper(self, data: Any) -> DataDumper | None:
+        result = None
+
+        for t, dumper in self.__thread_local.dumpers.items():
+            if isinstance(data, t):
+                result = dumper
+                break
+        
+        return result
+    
+
+    def set_dumper(self, t: type, dumper: DataDumper) -> None:
+        self.__thread_local.dumpers[t] = dumper
+
+
+    def clear_dumper(self, t: type) -> None:
+        self.__thread_local.dumpers.pop(t, None)
+
+
+    def __call__(self, f: Callable[P, R]) -> Callable[P, R]:
         @functools.wraps(f)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             data = f(*args, **kwargs)
-            dumper.dump(data, f.__name__)
+            dumper = self.get_dumper(data)
+            if (data is not None) and (dumper is not None):
+                dumper.dump(data, f.__name__)
         
             return data
 
         return wrapper
-    
-    return datadump_wrapper
+
+
+# decorator
+datadump = DataDump()
