@@ -18,13 +18,13 @@ def __start_and_join_thread(funcs: list[Callable]) -> None:
 
 
 def test_json_decorator() -> None:
-    datadump = dd.DataDump(
+    dd.datadump.set_context(dd.DataDumpContext(
         namespace=test_json_decorator.__name__,
         data_dumper_factory=dd.create_json_dumper_factory(output_base_dir='./tmp'),
         counter=dd.ThreadSafeCounter()
-    )
+    ))
 
-    @datadump()
+    @dd.datadump()
     def func1() -> dict:
         return {
             'aaa': [1, 2, 3],
@@ -33,7 +33,7 @@ def test_json_decorator() -> None:
             }
         }
 
-    @datadump(indent=2)
+    @dd.datadump(indent=2)
     def func2() -> list:
         return [10, 20, 30]
     
@@ -41,17 +41,17 @@ def test_json_decorator() -> None:
 
 
 def test_dataframe_decorator() -> None:
-    datadump = dd.DataDump(
+    dd.datadump.set_context(dd.DataDumpContext(
         namespace=test_dataframe_decorator.__name__,
         data_dumper_factory=dd.create_dataframe_dumper_factory(output_base_dir='./tmp'),
         counter=dd.ThreadSafeCounter()
-    )
+    ))
 
-    @datadump()
+    @dd.datadump()
     def func1() -> pd.DataFrame:
         return pd.DataFrame(np.arange(3 * 4).reshape(3, 4))
 
-    @datadump(index=True)
+    @dd.datadump(index=True)
     def func2() -> pd.DataFrame:
         return pd.DataFrame(np.arange(4 * 5).reshape(4, 5))
     

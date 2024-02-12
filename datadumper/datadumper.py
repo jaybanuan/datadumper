@@ -127,13 +127,27 @@ R = TypeVar('R')
 P = ParamSpec('P')
 
 
-# decorator class
-class DataDump:
+class DataDumpContext:
     def __init__(self, namespace: str, data_dumper_factory: DataDumperFactory, counter: Counter) -> None:
         self.__namespace = namespace
         self.__data_dumper_factory = data_dumper_factory
         self.__counter = counter
         self.__thread_local = threading.local()
+
+
+    @property
+    def namespace(self) -> str:
+        return self.__namespace
+
+
+    @property
+    def data_dumper_factory(self) -> DataDumperFactory:
+        return self.__data_dumper_factory
+
+
+    @property
+    def counter(self) -> Counter:
+        return self.__counter
 
 
     @property
@@ -144,15 +158,28 @@ class DataDump:
         return self.__thread_local.dumper
 
 
+# decorator class
+class DataDump:
+    def __init__(self) -> None:
+        pass
+
+
+    def set_context(self, context: DataDumpContext) -> None:
+        self.__context = context
+
+
     def __call__(self, **dumper_args) -> Callable[[Callable[P, R]], Callable[P, R]]:
         def middle_wrapper(f: Callable[P, R]) -> Callable[P, R]:
             @functools.wraps(f)
             def inner_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
                 data = f(*args, **kwargs)
-                self.dumper.dump(data, f.__name__, dumper_args)
+                self.__context.dumper.dump(data, f.__name__, dumper_args)
             
                 return data
     
             return inner_wrapper
         
         return middle_wrapper
+
+
+datadump = DataDump()
