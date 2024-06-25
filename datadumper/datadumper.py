@@ -1,185 +1,169 @@
+import collections.abc
 import functools
-import inspect
+import json
 import os
 import pathlib
 import threading
 
-from typing import Callable, TypeVar, ParamSpec, Protocol, Any, Self
+from typing import Callable, Protocol, Any
+
+import pandas as pd
 
 
 class DumpFunc(Protocol):
-    def __call__(self, output_dir: str | os.PathLike[str] , file_name_stem: str, data: Any, dumper_args: dict[str, Any]) -> None: ...
+    def __call__(self, data: Any, filepath: str | os.PathLike[str]) -> None: ...
 
 
-class Counter(Protocol):
-    def __call__(self) -> int: ...
+class PrefixFunc(Protocol):
+    def __call__(self) -> str: ...
 
 
-class ThreadSafeCounter(Counter):
-    def __init__(self) -> None:
-        self.__counter = -1
-        self.__lock = threading.Lock()
-    
-
-    def __call__(self) -> int:
-        with self.__lock:
-            self.__counter += 1
-            return self.__counter
-
-
-class DataDumper:
-    @classmethod
-    def __get_caller_stack_frame(cls) -> inspect.FrameInfo | None:
-        result = None
-
-        stack_frames = inspect.stack()
-        top = stack_frames[0]
-        for stack_frame in stack_frames[1:]:
-            if stack_frame.frame.f_code.co_filename != top.frame.f_code.co_filename:
-                result = stack_frame
-                break
-        
-        return result
-
-
-    def __init__(self,
-        dump_func: DumpFunc,
-        counter: Counter,
-        output_base_dir: str | os.PathLike[str],
-        namespace: str | None = None
-    ) -> None:
-        path_elements = [output_base_dir]
-        if namespace is not None:
-            path_elements.append(namespace)
-        
-        self.__dump_func = dump_func
-        self.__counter = counter
-        self.__output_dir = pathlib.Path(*path_elements)
-
-
-    def dump(self, data: Any, file_name_hint: str | None = None, args: dict[str, Any] = {}) -> None:
-        self.__output_dir.mkdir(parents=True, exist_ok=True)
-
-        if file_name_hint is None:
-            if (stack_frame := DataDumper.__get_caller_stack_frame()) and stack_frame.function != '<module>':
-                file_name_hint = stack_frame.function
-            else:
-                file_name_hint = ''
-
-        file_name_stem = f'{self.__counter():02}{"_" if file_name_hint else ""}{file_name_hint}'
-
-        self.__dump_func(output_dir=self.__output_dir, file_name_stem=file_name_stem, data=data, dumper_args=args)
-
-
-class DataDumperFactory(Protocol):
-    def __call__(self, namespace: str, counter: Counter) -> DataDumper: ...
-
-
-def create_json_dumper_factory(
-    output_base_dir: str | os.PathLike[str],
-    default_dumper_args: dict[str, Any] = {'ensure_ascii': False, 'indent': 4}
-) -> DataDumperFactory:
-    import json
-
-    def dumper_factory(namespace: str, counter: Counter) -> DataDumper:
-        def dump_func(output_dir: str | os.PathLike[str] , file_name_stem: str, data: list | dict, dumper_args: dict[str, Any]) -> None:
-            with open(pathlib.Path(output_dir, f'{file_name_stem}.json'), 'w') as f:
-                json.dump(
-                    obj=data,
-                    fp=f,
-                    **(default_dumper_args | dumper_args)
-                )
-
-        return DataDumper(
-            dump_func=dump_func,
-            counter=counter,
-            output_base_dir=output_base_dir,
-            namespace=namespace
-        )
-
-    return dumper_factory
-
-
-def create_dataframe_dumper_factory(
-    output_base_dir: str | os.PathLike[str],
-    default_dumper_args: dict[str, Any] = {'index': False, 'encoding': 'utf-8_sig'}
-) -> DataDumperFactory:
-    import pandas as pd
-
-    def dumper_factory(namespace: str, counter: Counter) -> DataDumper:
-        def dump_func(output_dir: str | os.PathLike[str], file_name_stem: str, data: pd.DataFrame, dumper_args: dict[str, Any]) -> None:
-            data.to_csv(
-                pathlib.Path(output_dir, f'{file_name_stem}.csv'),
-                **(default_dumper_args | dumper_args)
-            )
-
-        return DataDumper(
-            dump_func=dump_func,
-            counter=counter,
-            output_base_dir=pathlib.Path(output_base_dir),
-            namespace=namespace
-        )
-
-    return dumper_factory
-
-
-R = TypeVar('R')
-P = ParamSpec('P')
-
-
-class DataDumpContext:
-    def __init__(self, namespace: str, data_dumper_factory: DataDumperFactory, counter: Counter) -> None:
-        self.__namespace = namespace
-        self.__data_dumper_factory = data_dumper_factory
-        self.__counter = counter
-        self.__thread_local = threading.local()
-
-
-    @property
-    def namespace(self) -> str:
-        return self.__namespace
-
-
-    @property
-    def data_dumper_factory(self) -> DataDumperFactory:
-        return self.__data_dumper_factory
-
-
-    @property
-    def counter(self) -> Counter:
-        return self.__counter
-
-
-    @property
-    def dumper(self) -> DataDumper:
-        if (not hasattr(self.__thread_local, 'dumper')):
-            self.__thread_local.dumper = self.__data_dumper_factory(self.__namespace, self.__counter)
-        
-        return self.__thread_local.dumper
-
-
-# decorator class
-class DataDump:
-    def __init__(self) -> None:
+def dump_none(data: None, filepath: str | os.PathLike[str]) -> None:
+    with open(filepath, 'w') as f:
         pass
 
 
-    def set_context(self, context: DataDumpContext) -> None:
-        self.__context = context
+def dump_data_frame(data: pd.DataFrame, filepath: str | os.PathLike[str]) -> None:
+    data.to_csv(
+        filepath,
+        encoding='utf-8_sig'
+    )
 
 
-    def __call__(self, **dumper_args) -> Callable[[Callable[P, R]], Callable[P, R]]:
+def dump_json(data: dict, filepath: str | os.PathLike[str]) -> None:
+    with open(filepath, 'w') as f:
+        json.dump(
+            obj=data,
+            fp=f,
+            ensure_ascii=False,
+            indent=4
+        )
+
+
+class DataDumper(DumpFunc):
+    def __init__(self, data_type: type, dump_func: DumpFunc, ext: str | list[str]) -> None:
+        self.__data_type = data_type
+        self.__dump_func = dump_func
+        
+        if isinstance(ext, list):
+            if not ext:
+                raise Exception(f'The argument "extensions" is empty list.')
+
+            self.__ext = ext[0]
+            self.__ext_for_check = [extention.lower() for extention in ext]
+        elif isinstance(ext, str):
+            self.__ext = ext
+            self.__ext_for_check = [ext.lower()]
+        else:
+            raise Exception(f'Unknown type: {type(ext)}')
+    
+    @property
+    def data_type(self) -> type:
+        return self.__data_type
+
+
+    @property
+    def dump_func(self) -> DumpFunc:
+        return self.__dump_func
+
+
+    @property
+    def ext(self) -> list[str]:
+        return self.__ext
+
+
+    def __ensure_filepath(self, filepath: str | os.PathLike[str]) -> str:
+        # Ensure libpath.Path instance
+        filepath = filepath if isinstance(filepath, pathlib.Path) else pathlib.Path(filepath)
+
+        # Ensure file extension
+        suffix = filepath.suffix
+        if (not suffix) or (suffix.lower() not in self.__ext_for_check):
+            filepath = pathlib.Path(filepath.parent, f'{filepath.stem}{self.__ext}')
+        else:
+            suffix = ''
+
+        # Ensure parent directory exists
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        return filepath
+
+
+    def __call__(self, data: Any, filepath: str | os.PathLike[str]) -> None:
+        filepath = self.__ensure_filepath(filepath)
+
+        self.__dump_func(
+            data=data,
+            filepath=filepath
+        )
+
+
+class DataDump:
+    def __init__(self, output_dir: str | os.PathLike[str], prefix: str | PrefixFunc = None) -> None:
+        self.__rlock = threading.RLock()
+
+        self.__output_dir = output_dir if isinstance(output_dir, pathlib.Path) else pathlib.Path(output_dir)
+        self.__prefix = prefix
+        self.__dumpers: dict[type, DataDumper] = {}
+
+        self.add_dump_func(type(None),              dump_none,       '.txt')
+        self.add_dump_func(pd.DataFrame,            dump_data_frame, '.csv')
+        self.add_dump_func(collections.abc.Mapping, dump_json,       '.json')
+
+
+    def add_dump_func(self, data_type: type, dump_func: DumpFunc, ext: str | list[str]) -> None:
+        self.__dumpers[data_type] = DataDumper(data_type, dump_func, ext)
+
+
+    def __call_dumper[T](self, data: T, filepath: pathlib.Path) -> None:
+        for data_type, dumper in self.__dumpers.items():
+            if isinstance(data, data_type):
+                dumper(data, filepath)
+                break
+
+
+    def __call__[**P, R](self, filename: str | None = None) -> Callable[[Callable[P, R]], Callable[P, R]]:
         def middle_wrapper(f: Callable[P, R]) -> Callable[P, R]:
             @functools.wraps(f)
             def inner_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
                 data = f(*args, **kwargs)
-                self.__context.dumper.dump(data, f.__name__, dumper_args)
-            
-                return data
+
+                with self.__rlock:
+                    filepath = pathlib.Path(
+                        self.__output_dir,
+                        filename if filename is not None else f.__name__
+                    )
+    
+                    if self.__prefix is not None:
+                        prefix = ''
+                        if isinstance(self.__prefix, str):
+                            prefix = self.__prefix
+                        elif isinstance(self.__prefix, Callable):
+                            prefix = self.__prefix()
+    
+                        filepath = pathlib.Path(filepath.parent, f'{prefix}{filepath.name}')
+    
+                    self.__call_dumper(
+                        data=data,
+                        filepath=filepath
+                    )
+    
+                    return data
     
             return inner_wrapper
         
         return middle_wrapper
 
 
-datadump = DataDump()
+def counter_prefix() -> Callable[[], str]:
+    counter = 0
+
+    def func() -> str:
+        nonlocal counter
+
+        prefix = f'{counter:02}-'
+        counter = counter + 1
+
+        return prefix
+    
+    return func

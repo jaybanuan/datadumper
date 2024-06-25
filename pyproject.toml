@@ -6,8 +6,9 @@ authors = ["Jaybanuan"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.12"
 pandas = {version = "^2.1.4", optional = true}
+pyarrow = "^16.1.0"
 
 [tool.poetry.extras]
 pandas = ["pandas"]

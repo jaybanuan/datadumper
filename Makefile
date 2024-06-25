@@ -1,6 +1,6 @@
 .PHONY: clean
 clean:
-	rm -rf ./tmp
+	rm -rf ./output
 
 
 .PHONY: test
