@@ -1,21 +1,33 @@
+import datetime
+
 import pandas as pd
 import numpy as np
 
-import datadumper as dd
+import datadumper
+
+from . import dd
 
 
-save = dd.DataDump(
+dd.save.init(
     output_dir='./output/save',
-    prefix=dd.counter_prefix()
+    prefix=datetime.datetime.now().strftime('%Y-%m-%d-')
 )
 
 
-@save(filename='セーブ')
+dd.trace.init(
+    output_dir='./output/trace',
+    prefix=datadumper.counter_prefix()
+)
+
+
+@dd.trace()
+@dd.save(filename='セーブ')
 def DataFrameのテストデータの出力(flag: bool = True) -> pd.DataFrame | None:
     return pd.DataFrame(np.arange(12).reshape(3, 4)) if flag else None
 
 
-@save(filename='保存.CSV')
+@dd.save(filename='保存.CSV')
+@dd.trace()
 def JSONのテストデータの出力(flag: bool = True) -> dict | None:
     data = {
         'one': 1,

@@ -5,7 +5,7 @@ import os
 import pathlib
 import threading
 
-from typing import Callable, Protocol, Any
+from typing import Callable, Protocol, Any, Self
 
 import pandas as pd
 
@@ -68,8 +68,8 @@ class DataDumper(DumpFunc):
 
 
     @property
-    def ext(self) -> list[str]:
-        return self.__ext
+    def ext_for_check(self) -> list[str]:
+        return self.__ext_for_check
 
 
     def __ensure_filepath(self, filepath: str | os.PathLike[str]) -> str:
@@ -99,16 +99,27 @@ class DataDumper(DumpFunc):
 
 
 class DataDump:
-    def __init__(self, output_dir: str | os.PathLike[str], prefix: str | PrefixFunc = None) -> None:
+    def __init__(self) -> None:
+        self.__initialized = False
+
         self.__rlock = threading.RLock()
+        self.__dumpers: dict[type, DataDumper] = {}
+
+
+    def init(self, output_dir: str | os.PathLike[str], prefix: str | PrefixFunc = None) -> Self:
+        if self.__initialized:
+            raise Exception('Already initialized.')
 
         self.__output_dir = output_dir if isinstance(output_dir, pathlib.Path) else pathlib.Path(output_dir)
         self.__prefix = prefix
-        self.__dumpers: dict[type, DataDumper] = {}
 
         self.add_dump_func(type(None),              dump_none,       '.txt')
         self.add_dump_func(pd.DataFrame,            dump_data_frame, '.csv')
         self.add_dump_func(collections.abc.Mapping, dump_json,       '.json')
+
+        self.__initialized = True
+
+        return self
 
 
     def add_dump_func(self, data_type: type, dump_func: DumpFunc, ext: str | list[str]) -> None:
@@ -123,6 +134,9 @@ class DataDump:
 
 
     def __call__[**P, R](self, filename: str | None = None) -> Callable[[Callable[P, R]], Callable[P, R]]:
+        if not self.__initialized:
+            raise Exception('Not initialized yet.')
+
         def middle_wrapper(f: Callable[P, R]) -> Callable[P, R]:
             @functools.wraps(f)
             def inner_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
