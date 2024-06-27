@@ -31,7 +31,7 @@ def dump_data_frame(data: pd.DataFrame, filepath: str | os.PathLike[str]) -> Non
 
 
 def dump_json(data: dict, filepath: str | os.PathLike[str]) -> None:
-    with open(filepath, 'w') as f:
+    with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(
             obj=data,
             fp=f,
@@ -72,7 +72,7 @@ class DataDumper(DumpFunc):
         return self.__ext_for_check
 
 
-    def __ensure_filepath(self, filepath: str | os.PathLike[str]) -> str:
+    def __ensure_filepath(self, filepath: str | os.PathLike[str]) -> pathlib.Path:
         # Ensure libpath.Path instance
         filepath = filepath if isinstance(filepath, pathlib.Path) else pathlib.Path(filepath)
 
@@ -106,7 +106,7 @@ class DataDump:
         self.__dumpers: dict[type, DataDumper] = {}
 
 
-    def init(self, output_dir: str | os.PathLike[str], prefix: str | PrefixFunc = None) -> Self:
+    def init(self, output_dir: str | os.PathLike[str], prefix: str | PrefixFunc | None = None) -> Self:
         if self.__initialized:
             raise Exception('Already initialized.')
 
@@ -126,7 +126,7 @@ class DataDump:
         self.__dumpers[data_type] = DataDumper(data_type, dump_func, ext)
 
 
-    def __call_dumper[T](self, data: T, filepath: pathlib.Path) -> None:
+    def __call_dumper(self, data: object, filepath: pathlib.Path) -> None:
         for data_type, dumper in self.__dumpers.items():
             if isinstance(data, data_type):
                 dumper(data, filepath)
